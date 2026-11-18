@@ -2,6 +2,9 @@ import SwiftUI
 
 struct MenuView: View {
     @StateObject private var store = MenuStore()
+    @StateObject private var cart = CartStore()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var showCart = false
     @State private var searchText = ""
     @State private var selectedCategoryID: Int?
 
@@ -27,9 +30,24 @@ struct MenuView: View {
             }
             .navigationTitle(store.menu?.name ?? "Menu")
             .task {
+                cart.onMenuChanged = { Task { await store.load() } }
+                cart.startLive()
                 if store.menu == nil {
                     await store.load()
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    cart.startLive()
+                } else if phase == .background {
+                    cart.stopLive()
+                }
+            }
+            .onChange(of: store.menu?.categories.flatMap { $0.dishes.map(\.id) }) { _, _ in
+                if let menu = store.menu { cart.prune(to: menu) }
+            }
+            .sheet(isPresented: $showCart) {
+                CartView(cart: cart)
             }
             .onChange(of: store.menu?.categories.map(\.id)) { _, categoryIDs in
                 if let selectedCategoryID,
@@ -73,7 +91,9 @@ struct MenuView: View {
                                 .foregroundStyle(.secondary)
                         }
                         ForEach(category.dishes) { dish in
-                            DishRow(dish: dish)
+                            DishRow(dish: dish, quantity: cart.quantity(of: dish)) {
+                                cart.add(dish)
+                            }
                         }
                     }
                 }
@@ -82,6 +102,24 @@ struct MenuView: View {
         .searchable(text: $searchText, prompt: "Search the menu")
         .refreshable { await store.load() }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showCart = true
+                } label: {
+                    Image(systemName: cart.itemCount > 0 ? "cart.fill" : "cart")
+                        .overlay(alignment: .topTrailing) {
+                            if cart.itemCount > 0 {
+                                Text("\(cart.itemCount)")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(4)
+                                    .background(.red, in: Circle())
+                                    .offset(x: 10, y: -10)
+                            }
+                        }
+                }
+                .accessibilityLabel("Cart, \(cart.itemCount) items")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Picker("Category", selection: $selectedCategoryID) {
@@ -107,6 +145,8 @@ struct MenuView: View {
 
 private struct DishRow: View {
     let dish: Dish
+    let quantity: Int
+    let onAdd: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -131,9 +171,17 @@ private struct DishRow: View {
                 Text(price, format: .currency(code: "NOK"))
                     .font(.body.monospacedDigit())
                     .fixedSize(horizontal: true, vertical: false)
+
+                Button(action: onAdd) {
+                    Label(
+                        quantity > 0 ? "Add another \(dish.name) (\(quantity) in cart)" : "Add \(dish.name) to cart",
+                        systemImage: "cart.badge.plus"
+                    )
+                    .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
             }
         }
         .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
     }
 }
