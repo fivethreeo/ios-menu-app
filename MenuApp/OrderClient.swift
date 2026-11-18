@@ -87,12 +87,12 @@ struct OrderClient {
         return OrderReceipt(id: id, total: total)
     }
 
-    // Django sets the CSRF cookie on the shop page; URLSession stores it in its cookie jar.
+    // Django sets the CSRF cookie (prefixed per deployment, e.g. meny_csrftoken) on the shop page; URLSession stores it in its cookie jar.
     private func csrfToken() async throws -> String {
         let (_, response) = try await session.data(from: BackendConfig.origin)
         try Self.check(response)
         let cookies = session.configuration.httpCookieStorage?.cookies(for: BackendConfig.origin) ?? []
-        guard let token = cookies.first(where: { $0.name == "csrftoken" })?.value else {
+        guard let token = cookies.first(where: { $0.name.hasSuffix("csrftoken") })?.value else {
             throw OrderError.invalidResponse
         }
         return token
